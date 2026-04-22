@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Support Volume Flow - Combined Views</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-sankey/0.12.3/d3-sankey.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #07101f;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    display: flex;
+  }
+  .sidebar {
+    width: 180px;
+    min-width: 180px;
+    background: rgba(255,255,255,0.03);
+    border-right: 1px solid rgba(255,255,255,0.08);
+    padding: 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sidebar-title {
+    color: #64748b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 8px 12px 6px;
+    margin-top: 8px;
+  }
+  .sidebar-title:first-child { margin-top: 0; }
+  .nav-btn {
+    background: transparent;
+    border: none;
+    padding: 8px 12px;
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s;
+    border-left: 2px solid transparent;
+  }
+  .nav-btn:hover {
+    background: rgba(255,255,255,0.05);
+    color: #e2e8f0;
+  }
+  .nav-btn.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-left-color: #3b82f6;
+    color: #ffffff;
+  }
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 48px;
+    overflow-x: auto;
+  }
+  #chart { width: 100%; max-width: 1400px; text-align: center; }
+  svg { overflow: visible; display: block; width: 100%; }
+  .link {
+    fill: none;
+    stroke-opacity: 0.35;
+    transition: stroke-opacity 0.18s;
+    cursor: pointer;
+  }
+  .link:hover { stroke-opacity: 0.7; }
+  .node-rect {
+    cursor: pointer;
+    transition: opacity 0.18s;
+  }
+  .node-rect:hover { opacity: 1 !important; }
+  #tooltip {
+    position: fixed;
+    background: rgba(8,16,31,0.97);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: #f1f5f9;
+    font-size: 13px;
+    pointer-events: none;
+    display: none;
+    z-index: 999;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    white-space: nowrap;
+  }
+  #tooltip .tip-label { font-weight: 700; margin-bottom: 3px; }
+  #tooltip .tip-val { color: #94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-title">All Brands</div>
+  <button class="nav-btn active" onclick="showVersion('all-ecm')">Entry → Channel → Merge</button>
+  <button class="nav-btn" onclick="showVersion('all-cbi')">Channel → Brand → Issue</button>
+
+  <div class="sidebar-title">SG + SGO</div>
+  <button class="nav-btn" onclick="showVersion('sgsgo-ecm')">Entry → Channel → Merge</button>
+  <button class="nav-btn" onclick="showVersion('sgsgo-cbi')">Channel → Brand → Issue</button>
+
+  <div class="sidebar-title">SeatGeek</div>
+  <button class="nav-btn" onclick="showVersion('sg-ecm')">Entry → Channel → Merge</button>
+  <button class="nav-btn" onclick="showVersion('sg-ci')">Channel → Issue Type</button>
+
+  <div class="sidebar-title">SG Open</div>
+  <button class="nav-btn" onclick="showVersion('sgo-ecm')">Entry → Channel → Merge</button>
+  <button class="nav-btn" onclick="showVersion('sgo-ci')">Channel → Issue Type</button>
+
+  <div class="sidebar-title">BX</div>
+  <button class="nav-btn" onclick="showVersion('bx-ecm')">Entry → Channel → Merge</button>
+  <button class="nav-btn" onclick="showVersion('bx-ci')">Channel → Issue Type</button>
+</div>
+
+<div class="main-content">
+  <div id="chart"></div>
+</div>
+
+<div id="tooltip">
+  <div class="tip-label" id="tip-label"></div>
+  <div class="tip-val" id="tip-val"></div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+// DATA SETS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ALL BRANDS: Entry Point → Channel → Merge Status
+const dataAllECM = [
+  ["Chat Bot","Email","No",87358],
+  ["Chat Bot","Email","Yes",66428],
+  ["Chat Bot","Messaging","No",210554],
+  ["Chat Bot","Messaging","Yes",113669],
+  ["Chat Bot","Phone","No",30332],
+  ["Chat Bot","Phone","Yes",43966],
+  ["Direct Email","Email","No",153130],
+  ["Direct Email","Email","Yes",50862],
+  ["Direct Phone","Phone","No",78792],
+  ["Direct Phone","Phone","Yes",70443],
+  ["Other","Other","No",7676],
+  ["Other","Other","Yes",4268],
+];
+
+// ALL BRANDS: Channel → Brand → Issue Type (Fulfillment_reassigned merged into Fulfillment)
+const dataAllCBI = [
+  ["Email","BX","Account Questions",2235],
+  ["Email","BX","Fulfillment",48926],
+  ["Email","BX","Needs Review",22],
+  ["Email","BX","Order Issues",19847],
+  ["Email","BX","Unspecified",3620],
+  ["Email","BX","Other Questions",340],
+  ["Email","BX","Selling/Transferring Tickets",16108],
+  ["Email","SG Open","Account Questions",3402],
+  ["Email","SG Open","Buying Tickets",1729],
+  ["Email","SG Open","Fulfillment",5008],
+  ["Email","SG Open","Non-Fulfillment Order Support",16992],
+  ["Email","SG Open","Not A Customer Contact",418],
+  ["Email","SG Open","Unspecified",3815],
+  ["Email","SG Open","Other Customer Requests",2688],
+  ["Email","SG Open","Selling/Transferring Tickets",3355],
+  ["Email","SeatGeek","Account Questions",18412],
+  ["Email","SeatGeek","Buying Tickets",10661],
+  ["Email","SeatGeek","Fulfillment",44002],
+  ["Email","SeatGeek","Non-Fulfillment Order Support",38465],
+  ["Email","SeatGeek","Not A Customer Contact",3749],
+  ["Email","SeatGeek","Unspecified",71355],
+  ["Email","SeatGeek","Other Customer Requests",24915],
+  ["Email","SeatGeek","Selling/Transferring Tickets",17714],
+  ["Messaging","BX","Account Questions",8],
+  ["Messaging","BX","Fulfillment",42],
+  ["Messaging","BX","Non-Fulfillment Order Support",47],
+  ["Messaging","BX","Unspecified",1],
+  ["Messaging","BX","Selling/Transferring Tickets",11],
+  ["Messaging","SG Open","Account Questions",492],
+  ["Messaging","SG Open","Buying Tickets",2312],
+  ["Messaging","SG Open","Fulfillment",5896],
+  ["Messaging","SG Open","Non-Fulfillment Order Support",6697],
+  ["Messaging","SG Open","Not A Customer Contact",42],
+  ["Messaging","SG Open","Unspecified",385],
+  ["Messaging","SG Open","Other Customer Requests",696],
+  ["Messaging","SG Open","Selling/Transferring Tickets",4367],
+  ["Messaging","SeatGeek","Account Questions",11685],
+  ["Messaging","SeatGeek","Buying Tickets",25811],
+  ["Messaging","SeatGeek","Fulfillment",123954],
+  ["Messaging","SeatGeek","Non-Fulfillment Order Support",32626],
+  ["Messaging","SeatGeek","Not A Customer Contact",805],
+  ["Messaging","SeatGeek","Unspecified",59844],
+  ["Messaging","SeatGeek","Other Customer Requests",9822],
+  ["Messaging","SeatGeek","Selling/Transferring Tickets",38680],
+  ["Other","BX","Account Questions",4],
+  ["Other","BX","Fulfillment",282],
+  ["Other","BX","Non-Fulfillment Order Support",18],
+  ["Other","BX","Order Issues",29],
+  ["Other","BX","Unspecified",24],
+  ["Other","BX","Selling/Transferring Tickets",6],
+  ["Other","SG Open","Account Questions",38],
+  ["Other","SG Open","Buying Tickets",123],
+  ["Other","SG Open","Fulfillment",145],
+  ["Other","SG Open","Non-Fulfillment Order Support",232],
+  ["Other","SG Open","Not A Customer Contact",2],
+  ["Other","SG Open","Unspecified",6],
+  ["Other","SG Open","Other Customer Requests",14],
+  ["Other","SG Open","Selling/Transferring Tickets",137],
+  ["Other","SeatGeek","Account Questions",606],
+  ["Other","SeatGeek","Buying Tickets",2079],
+  ["Other","SeatGeek","Fulfillment",2814],
+  ["Other","SeatGeek","Non-Fulfillment Order Support",1404],
+  ["Other","SeatGeek","Not A Customer Contact",151],
+  ["Other","SeatGeek","Unspecified",1026],
+  ["Other","SeatGeek","Other Customer Requests",2035],
+  ["Other","SeatGeek","Selling/Transferring Tickets",769],
+  ["Phone","BX","Account Questions",414],
+  ["Phone","BX","Fulfillment",2883],
+  ["Phone","BX","Needs Review",21],
+  ["Phone","BX","Order Issues",1835],
+  ["Phone","BX","Unspecified",940],
+  ["Phone","BX","Other Questions",586],
+  ["Phone","BX","Selling/Transferring Tickets",665],
+  ["Phone","SG Open","Account Questions",7264],
+  ["Phone","SG Open","Buying Tickets",9470],
+  ["Phone","SG Open","Fulfillment",12217],
+  ["Phone","SG Open","Non-Fulfillment Order Support",11434],
+  ["Phone","SG Open","Not A Customer Contact",707],
+  ["Phone","SG Open","Unspecified",4956],
+  ["Phone","SG Open","Other Customer Requests",4401],
+  ["Phone","SG Open","Selling/Transferring Tickets",7657],
+  ["Phone","SeatGeek","Account Questions",7158],
+  ["Phone","SeatGeek","Buying Tickets",14793],
+  ["Phone","SeatGeek","Fulfillment",78916],
+  ["Phone","SeatGeek","Non-Fulfillment Order Support",24177],
+  ["Phone","SeatGeek","Not A Customer Contact",1074],
+  ["Phone","SeatGeek","Unspecified",8215],
+  ["Phone","SeatGeek","Other Customer Requests",7848],
+  ["Phone","SeatGeek","Selling/Transferring Tickets",15902],
+];
+
+// SEATGEEK: Entry Point → Channel → Merge Status
+const dataSgECM = [
+  ["Chat Bot","Messaging","No",193516],
+  ["Chat Bot","Messaging","Yes",109711],
+  ["Chat Bot","Email","No",82144],
+  ["Chat Bot","Email","Yes",64824],
+  ["Direct Phone","Phone","Yes",49581],
+  ["Direct Email","Email","No",45873],
+  ["Chat Bot","Phone","Yes",43966],
+  ["Direct Email","Email","Yes",36432],
+  ["Direct Phone","Phone","No",34204],
+  ["Chat Bot","Phone","No",30332],
+  ["Other","Other","No",6922],
+  ["Other","Other","Yes",3962],
+];
+
+// SEATGEEK: Channel → Issue Type (Fulfillment_reassigned merged into Fulfillment)
+const dataSgCI = [
+  ["Messaging","Fulfillment",123954],
+  ["Phone","Fulfillment",78916],
+  ["Email","Unspecified",71355],
+  ["Messaging","Unspecified",59844],
+  ["Email","Fulfillment",44002],
+  ["Messaging","Selling/Transferring Tickets",38680],
+  ["Email","Non-Fulfillment Order Support",38465],
+  ["Messaging","Non-Fulfillment Order Support",32626],
+  ["Messaging","Buying Tickets",25811],
+  ["Email","Other Customer Requests",24915],
+  ["Phone","Non-Fulfillment Order Support",24177],
+  ["Email","Account Questions",18412],
+  ["Email","Selling/Transferring Tickets",17714],
+  ["Phone","Selling/Transferring Tickets",15902],
+  ["Phone","Buying Tickets",14793],
+  ["Messaging","Account Questions",11685],
+  ["Email","Buying Tickets",10661],
+  ["Messaging","Other Customer Requests",9822],
+  ["Phone","Unspecified",8215],
+  ["Phone","Other Customer Requests",7848],
+  ["Phone","Account Questions",7158],
+  ["Email","Not A Customer Contact",3749],
+  ["Other","Fulfillment",2814],
+  ["Other","Buying Tickets",2079],
+  ["Other","Other Customer Requests",2035],
+  ["Other","Non-Fulfillment Order Support",1404],
+  ["Phone","Not A Customer Contact",1074],
+  ["Other","Unspecified",1026],
+  ["Messaging","Not A Customer Contact",805],
+  ["Other","Selling/Transferring Tickets",769],
+  ["Other","Account Questions",606],
+  ["Other","Not A Customer Contact",151],
+];
+
+// SG OPEN: Entry Point → Channel → Merge Status
+const dataSgoECM = [
+  ["Direct Phone","Phone","No",39288],
+  ["Direct Email","Email","No",24289],
+  ["Direct Phone","Phone","Yes",18818],
+  ["Chat Bot","Messaging","No",16958],
+  ["Direct Email","Email","Yes",6300],
+  ["Chat Bot","Email","No",5214],
+  ["Chat Bot","Messaging","Yes",3929],
+  ["Chat Bot","Email","Yes",1604],
+  ["Other","Other","No",411],
+  ["Other","Other","Yes",286],
+];
+
+// SG OPEN: Channel → Issue Type (Fulfillment_reassigned merged into Fulfillment)
+const dataSgoCI = [
+  ["Email","Non-Fulfillment Order Support",16992],
+  ["Phone","Fulfillment",12217],
+  ["Phone","Non-Fulfillment Order Support",11434],
+  ["Phone","Buying Tickets",9470],
+  ["Phone","Selling/Transferring Tickets",7657],
+  ["Phone","Account Questions",7264],
+  ["Messaging","Non-Fulfillment Order Support",6697],
+  ["Messaging","Fulfillment",5896],
+  ["Email","Fulfillment",5008],
+  ["Phone","Unspecified",4956],
+  ["Phone","Other Customer Requests",4401],
+  ["Messaging","Selling/Transferring Tickets",4367],
+  ["Email","Unspecified",3815],
+  ["Email","Account Questions",3402],
+  ["Email","Selling/Transferring Tickets",3355],
+  ["Email","Other Customer Requests",2688],
+  ["Messaging","Buying Tickets",2312],
+  ["Email","Buying Tickets",1729],
+  ["Phone","Not A Customer Contact",707],
+  ["Messaging","Other Customer Requests",696],
+  ["Messaging","Account Questions",492],
+  ["Email","Not A Customer Contact",418],
+  ["Messaging","Unspecified",385],
+  ["Other","Non-Fulfillment Order Support",232],
+  ["Other","Fulfillment",145],
+  ["Other","Selling/Transferring Tickets",137],
+  ["Other","Buying Tickets",123],
+  ["Messaging","Not A Customer Contact",42],
+  ["Other","Account Questions",38],
+  ["Other","Other Customer Requests",14],
+  ["Other","Unspecified",6],
+  ["Other","Not A Customer Contact",2],
+];
+
+// BX: Entry Point → Channel → Merge Status
+const dataBxECM = [
+  ["Direct Email","Email","No",82968],
+  ["Direct Email","Email","Yes",8130],
+  ["Direct Phone","Phone","No",5300],
+  ["Direct Phone","Phone","Yes",2044],
+  ["Other","Other","No",343],
+  ["Chat Bot","Messaging","No",80],
+  ["Chat Bot","Messaging","Yes",29],
+  ["Other","Other","Yes",20],
+];
+
+// BX: Channel → Issue Type (Fulfillment already combined)
+const dataBxCI = [
+  ["Email","Fulfillment",48926],
+  ["Email","Order Issues",19847],
+  ["Email","Selling/Transferring Tickets",16108],
+  ["Email","Unspecified",3620],
+  ["Phone","Fulfillment",2883],
+  ["Email","Account Questions",2235],
+  ["Phone","Order Issues",1835],
+  ["Phone","Unspecified",940],
+  ["Phone","Selling/Transferring Tickets",665],
+  ["Phone","Other Questions",586],
+  ["Phone","Account Questions",414],
+  ["Email","Other Questions",340],
+  ["Other","Fulfillment",282],
+  ["Messaging","Non-Fulfillment Order Support",47],
+  ["Messaging","Fulfillment",42],
+  ["Other","Order Issues",29],
+  ["Other","Unspecified",24],
+  ["Email","Needs Review",22],
+  ["Phone","Needs Review",21],
+  ["Other","Non-Fulfillment Order Support",18],
+  ["Messaging","Selling/Transferring Tickets",11],
+  ["Messaging","Account Questions",8],
+  ["Other","Selling/Transferring Tickets",6],
+  ["Other","Account Questions",4],
+  ["Messaging","Unspecified",1],
+];
+
+// SG + SGO: Entry Point → Channel → Merge Status (combined SeatGeek + SG Open)
+const dataSgSgoECM = [
+  ["Chat Bot","Messaging","No",210474],
+  ["Chat Bot","Messaging","Yes",113640],
+  ["Chat Bot","Email","No",87358],
+  ["Chat Bot","Email","Yes",66428],
+  ["Direct Phone","Phone","No",73492],
+  ["Direct Phone","Phone","Yes",68399],
+  ["Direct Email","Email","No",70162],
+  ["Direct Email","Email","Yes",42732],
+  ["Chat Bot","Phone","Yes",43966],
+  ["Chat Bot","Phone","No",30332],
+  ["Other","Other","No",7333],
+  ["Other","Other","Yes",4248],
+];
+
+// SG + SGO: Channel → Brand → Issue Type (SeatGeek + SG Open only)
+const dataSgSgoCBI = [
+  ["Email","SG Open","Account Questions",3402],
+  ["Email","SG Open","Buying Tickets",1729],
+  ["Email","SG Open","Fulfillment",5008],
+  ["Email","SG Open","Non-Fulfillment Order Support",16992],
+  ["Email","SG Open","Not A Customer Contact",418],
+  ["Email","SG Open","Unspecified",3815],
+  ["Email","SG Open","Other Customer Requests",2688],
+  ["Email","SG Open","Selling/Transferring Tickets",3355],
+  ["Email","SeatGeek","Account Questions",18412],
+  ["Email","SeatGeek","Buying Tickets",10661],
+  ["Email","SeatGeek","Fulfillment",44002],
+  ["Email","SeatGeek","Non-Fulfillment Order Support",38465],
+  ["Email","SeatGeek","Not A Customer Contact",3749],
+  ["Email","SeatGeek","Unspecified",71355],
+  ["Email","SeatGeek","Other Customer Requests",24915],
+  ["Email","SeatGeek","Selling/Transferring Tickets",17714],
+  ["Messaging","SG Open","Account Questions",492],
+  ["Messaging","SG Open","Buying Tickets",2312],
+  ["Messaging","SG Open","Fulfillment",5896],
+  ["Messaging","SG Open","Non-Fulfillment Order Support",6697],
+  ["Messaging","SG Open","Not A Customer Contact",42],
+  ["Messaging","SG Open","Unspecified",385],
+  ["Messaging","SG Open","Other Customer Requests",696],
+  ["Messaging","SG Open","Selling/Transferring Tickets",4367],
+  ["Messaging","SeatGeek","Account Questions",11685],
+  ["Messaging","SeatGeek","Buying Tickets",25811],
+  ["Messaging","SeatGeek","Fulfillment",123954],
+  ["Messaging","SeatGeek","Non-Fulfillment Order Support",32626],
+  ["Messaging","SeatGeek","Not A Customer Contact",805],
+  ["Messaging","SeatGeek","Unspecified",59844],
+  ["Messaging","SeatGeek","Other Customer Requests",9822],
+  ["Messaging","SeatGeek","Selling/Transferring Tickets",38680],
+  ["Other","SG Open","Account Questions",38],
+  ["Other","SG Open","Buying Tickets",123],
+  ["Other","SG Open","Fulfillment",145],
+  ["Other","SG Open","Non-Fulfillment Order Support",232],
+  ["Other","SG Open","Not A Customer Contact",2],
+  ["Other","SG Open","Unspecified",6],
+  ["Other","SG Open","Other Customer Requests",14],
+  ["Other","SG Open","Selling/Transferring Tickets",137],
+  ["Other","SeatGeek","Account Questions",606],
+  ["Other","SeatGeek","Buying Tickets",2079],
+  ["Other","SeatGeek","Fulfillment",2814],
+  ["Other","SeatGeek","Non-Fulfillment Order Support",1404],
+  ["Other","SeatGeek","Not A Customer Contact",151],
+  ["Other","SeatGeek","Unspecified",1026],
+  ["Other","SeatGeek","Other Customer Requests",2035],
+  ["Other","SeatGeek","Selling/Transferring Tickets",769],
+  ["Phone","SG Open","Account Questions",7264],
+  ["Phone","SG Open","Buying Tickets",9470],
+  ["Phone","SG Open","Fulfillment",12217],
+  ["Phone","SG Open","Non-Fulfillment Order Support",11434],
+  ["Phone","SG Open","Not A Customer Contact",707],
+  ["Phone","SG Open","Unspecified",4956],
+  ["Phone","SG Open","Other Customer Requests",4401],
+  ["Phone","SG Open","Selling/Transferring Tickets",7657],
+  ["Phone","SeatGeek","Account Questions",7158],
+  ["Phone","SeatGeek","Buying Tickets",14793],
+  ["Phone","SeatGeek","Fulfillment",78916],
+  ["Phone","SeatGeek","Non-Fulfillment Order Support",24177],
+  ["Phone","SeatGeek","Not A Customer Contact",1074],
+  ["Phone","SeatGeek","Unspecified",8215],
+  ["Phone","SeatGeek","Other Customer Requests",7848],
+  ["Phone","SeatGeek","Selling/Transferring Tickets",15902],
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COLORS
+// ══════════════════════════════════════════════════════════════════════════════
+const COLORS = {
+  "Chat Bot": "#38bdf8",
+  "Direct Email": "#4ade80",
+  "Direct Phone": "#fb923c",
+  "Messaging": "#67e8f9",
+  "Email": "#86efac",
+  "Phone": "#fdba74",
+  "Other": "#94a3b8",
+  "Merged": "#10b981",
+  "Not Merged": "#f43f5e",
+  "SeatGeek": "#00e5a0",
+  "SG Open": "#a78bfa",
+  "BX": "#f472b6",
+  "Fulfillment": "#3b82f6",
+  "Non-Fulfillment Order Support": "#ef4444",
+  "Selling/Transferring Tickets": "#eab308",
+  "Buying Tickets": "#22c55e",
+  "Other Customer Requests": "#a855f7",
+  "Account Questions": "#06b6d4",
+  "Not A Customer Contact": "#f97316",
+  "Order Issues": "#fb7185",
+  "Other Questions": "#c084fc",
+  "Needs Review": "#78716c",
+  "Unspecified": "#64748b",
+};
+
+function fmt(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1)+"M";
+  if (n >= 1000) return (n/1000).toFixed(1)+"k";
+  return n.toLocaleString();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TOOLTIP HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+const tip = document.getElementById("tooltip");
+const tipLabel = document.getElementById("tip-label");
+const tipVal = document.getElementById("tip-val");
+
+let currentTotal = 0;
+
+function showTip(event, label, val) {
+  tipLabel.textContent = label;
+  const pct = currentTotal > 0 ? ((val / currentTotal) * 100).toFixed(1) + "%" : "";
+  tipVal.textContent = fmt(val) + " tickets" + (pct ? " (" + pct + ")" : "");
+  tip.style.display = "block";
+  moveTip(event);
+}
+function moveTip(event) {
+  tip.style.left = (event.clientX + 14) + "px";
+  tip.style.top = (event.clientY - 38) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// VERSION SWITCHING
+// ══════════════════════════════════════════════════════════════════════════════
+let currentVersion = 'all-ecm';
+
+function showVersion(version) {
+  currentVersion = version;
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('onclick').includes(`'${version}'`));
+  });
+
+  d3.select("#chart").selectAll("*").remove();
+
+  switch(version) {
+    case 'all-ecm': renderECM(dataAllECM, "All Brands"); break;
+    case 'all-cbi': renderCBI(dataAllCBI, "All Brands"); break;
+    case 'sgsgo-ecm': renderECM(dataSgSgoECM, "SeatGeek + SG Open"); break;
+    case 'sgsgo-cbi': renderCBI(dataSgSgoCBI, "SeatGeek + SG Open"); break;
+    case 'sg-ecm': renderECM(dataSgECM, "SeatGeek"); break;
+    case 'sg-ci': renderCI(dataSgCI, "SeatGeek"); break;
+    case 'sgo-ecm': renderECM(dataSgoECM, "SG Open"); break;
+    case 'sgo-ci': renderCI(dataSgoCI, "SG Open"); break;
+    case 'bx-ecm': renderECM(dataBxECM, "BX"); break;
+    case 'bx-ci': renderCI(dataBxCI, "BX"); break;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER: Entry Point → Channel → Merge Status
+// ══════════════════════════════════════════════════════════════════════════════
+function renderECM(raw, brandName) {
+  const nodeIndex = new Map();
+  const nodes = [];
+  const linkMap = new Map();
+
+  function getNode(name, depth) {
+    const key = `${depth}::${name}`;
+    if (!nodeIndex.has(key)) {
+      nodeIndex.set(key, nodes.length);
+      nodes.push({ name, depth });
+    }
+    return nodeIndex.get(key);
+  }
+
+  function addLink(si, ti, v) {
+    const k = `${si}->${ti}`;
+    if (!linkMap.has(k)) linkMap.set(k, { source: si, target: ti, value: 0 });
+    linkMap.get(k).value += v;
+  }
+
+  raw.forEach(([ep, ch, mg, v]) => {
+    if (!v) return;
+    const ei = getNode(ep, 0);
+    const ci = getNode(ch, 1);
+    const mi = getNode(mg === "Yes" ? "Merged" : "Not Merged", 2);
+    addLink(ei, ci, v);
+    addLink(ci, mi, v);
+  });
+
+  const links = Array.from(linkMap.values());
+  const total = raw.reduce((sum, r) => sum + r[3], 0);
+  currentTotal = total;
+  function pct(n) { return ((n / total) * 100).toFixed(1) + "%"; }
+
+  const margin = { top: 100, right: 150, bottom: 30, left: 150 };
+  const totalW = 1100;
+  const totalH = 650;
+  const W = totalW - margin.left - margin.right;
+  const H = totalH - margin.top - margin.bottom;
+
+  const svg = d3.select("#chart").append("svg")
+    .attr("width", totalW)
+    .attr("height", totalH);
+
+  const chartCenterX = margin.left + (W / 2);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 28)
+    .attr("text-anchor", "middle").attr("fill", "#ffffff")
+    .attr("font-size", 24).attr("font-weight", 700)
+    .text("Support Volume Flow");
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 50)
+    .attr("text-anchor", "middle").attr("fill", "#e2e8f0")
+    .attr("font-size", 14).text(brandName);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 70)
+    .attr("text-anchor", "middle").attr("fill", "#94a3b8")
+    .attr("font-size", 12).attr("font-weight", 600).attr("letter-spacing", "0.1em")
+    .text("ENTRY POINT → CHANNEL → MERGE STATUS");
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const sk = d3.sankey()
+    .nodeId(d => d.index).nodeWidth(20).nodePadding(28)
+    .nodeSort((a, b) => b.value - a.value)
+    .extent([[0, 0], [W, H]]);
+
+  const graph = sk({
+    nodes: nodes.map((d, i) => ({ ...d, index: i })),
+    links: links.map(d => ({ ...d }))
+  });
+
+  const headers = ["Entry Point", "Channel", "Merge Status"];
+  [0,1,2].forEach(depth => {
+    const matches = graph.nodes.filter(n => n.depth === depth);
+    if (!matches.length) return;
+    const first = matches[0];
+    const xPos = depth === 2 ? first.x1 : depth === 0 ? first.x0 : (first.x0 + first.x1) / 2;
+    g.append("text")
+      .attr("x", xPos).attr("y", -16)
+      .attr("text-anchor", depth === 0 ? "start" : depth === 2 ? "end" : "middle")
+      .attr("fill", "#94a3b8").attr("font-size", 11).attr("font-weight", 700)
+      .attr("letter-spacing", "0.1em").text(headers[depth].toUpperCase());
+  });
+
+  g.append("g").selectAll(".link")
+    .data(graph.links).join("path")
+    .attr("class", "link").attr("d", d3.sankeyLinkHorizontal())
+    .attr("stroke", d => COLORS[d.source.name] || "#888")
+    .attr("stroke-width", d => Math.max(1, d.width))
+    .on("mousemove", (e, d) => showTip(e, `${d.source.name} → ${d.target.name}`, d.value))
+    .on("mouseleave", hideTip);
+
+  const nodeG = g.append("g").selectAll(".node")
+    .data(graph.nodes).join("g").attr("class", "node");
+
+  nodeG.append("rect")
+    .attr("class", "node-rect")
+    .attr("x", d => d.x0).attr("y", d => d.y0)
+    .attr("width", d => d.x1 - d.x0).attr("height", d => Math.max(2, d.y1 - d.y0))
+    .attr("rx", 4).attr("fill", d => COLORS[d.name] || "#888").attr("opacity", 0.88)
+    .on("mousemove", (e, d) => showTip(e, d.name, d.value))
+    .on("mouseleave", hideTip);
+
+  function midY(d) { return (d.y0 + d.y1) / 2; }
+  function nodeHeight(d) { return d.y1 - d.y0; }
+  const smallThreshold = 25;
+
+  nodeG.filter(d => d.depth === 0).each(function(d) {
+    const grp = d3.select(this);
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",11).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+    } else {
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) - 7).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",13).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) + 10).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill","#e2e8f0")
+        .attr("font-size",11).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+
+  nodeG.filter(d => d.depth === 1).each(function(d) {
+    const grp = d3.select(this);
+    const cx = (d.x0 + d.x1) / 2;
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      grp.append("text").attr("x", cx).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",10).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value));
+    } else {
+      grp.append("text").attr("x", cx).attr("y", midY(d) - 7).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",12).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", cx).attr("y", midY(d) + 10).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill","#e2e8f0")
+        .attr("font-size",10).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+
+  nodeG.filter(d => d.depth === 2).each(function(d) {
+    const grp = d3.select(this);
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      grp.append("text").attr("x", d.x1 + 10).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",11).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+    } else {
+      grp.append("text").attr("x", d.x1 + 10).attr("y", midY(d) - 7).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",13).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", d.x1 + 10).attr("y", midY(d) + 10).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill","#e2e8f0")
+        .attr("font-size",11).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER: Channel → Brand → Issue Type
+// ══════════════════════════════════════════════════════════════════════════════
+function renderCBI(raw, brandName) {
+  const nodeIndex = new Map();
+  const nodes = [];
+  const linkMap = new Map();
+
+  function getNode(name, depth) {
+    const key = `${depth}::${name}`;
+    if (!nodeIndex.has(key)) {
+      nodeIndex.set(key, nodes.length);
+      nodes.push({ name, depth });
+    }
+    return nodeIndex.get(key);
+  }
+
+  function addLink(si, ti, v) {
+    const k = `${si}->${ti}`;
+    if (!linkMap.has(k)) linkMap.set(k, { source: si, target: ti, value: 0 });
+    linkMap.get(k).value += v;
+  }
+
+  raw.forEach(([ch, br, it, v]) => {
+    if (!v) return;
+    const ci = getNode(ch, 0);
+    const bi = getNode(br, 1);
+    const ii = getNode(it, 2);
+    addLink(ci, bi, v);
+    addLink(bi, ii, v);
+  });
+
+  const links = Array.from(linkMap.values());
+  const total = raw.reduce((sum, r) => sum + r[3], 0);
+  currentTotal = total;
+  function pct(n) { return ((n / total) * 100).toFixed(1) + "%"; }
+
+  const margin = { top: 100, right: 260, bottom: 20, left: 130 };
+  const totalW = 1300;
+  const totalH = 750;
+  const W = totalW - margin.left - margin.right;
+  const H = totalH - margin.top - margin.bottom;
+
+  const svg = d3.select("#chart").append("svg")
+    .attr("width", totalW).attr("height", totalH);
+
+  const chartCenterX = margin.left + (W / 2);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 28)
+    .attr("text-anchor", "middle").attr("fill", "#ffffff")
+    .attr("font-size", 24).attr("font-weight", 700)
+    .text("Support Volume Flow");
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 50)
+    .attr("text-anchor", "middle").attr("fill", "#e2e8f0")
+    .attr("font-size", 14).text(brandName);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 70)
+    .attr("text-anchor", "middle").attr("fill", "#94a3b8")
+    .attr("font-size", 12).attr("font-weight", 600).attr("letter-spacing", "0.1em")
+    .text("CHANNEL → BRAND → ISSUE TYPE");
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const sk = d3.sankey()
+    .nodeId(d => d.index).nodeWidth(20).nodePadding(14)
+    .nodeSort((a, b) => b.value - a.value)
+    .extent([[0, 0], [W, H]]);
+
+  const graph = sk({
+    nodes: nodes.map((d, i) => ({ ...d, index: i })),
+    links: links.map(d => ({ ...d }))
+  });
+
+  const headers = ["Channel", "Brand", "Issue Type"];
+  [0,1,2].forEach(depth => {
+    const matches = graph.nodes.filter(n => n.depth === depth);
+    if (!matches.length) return;
+    const first = matches[0];
+    const xPos = depth === 2 ? first.x1 : depth === 0 ? first.x0 : (first.x0 + first.x1) / 2;
+    g.append("text")
+      .attr("x", xPos).attr("y", -16)
+      .attr("text-anchor", depth === 0 ? "start" : depth === 2 ? "end" : "middle")
+      .attr("fill", "#94a3b8").attr("font-size", 11).attr("font-weight", 700)
+      .attr("letter-spacing", "0.1em").text(headers[depth].toUpperCase());
+  });
+
+  g.append("g").selectAll(".link")
+    .data(graph.links).join("path")
+    .attr("class", "link").attr("d", d3.sankeyLinkHorizontal())
+    .attr("stroke", d => COLORS[d.source.name] || "#888")
+    .attr("stroke-width", d => Math.max(1, d.width))
+    .on("mousemove", (e, d) => showTip(e, `${d.source.name} → ${d.target.name}`, d.value))
+    .on("mouseleave", hideTip);
+
+  const nodeG = g.append("g").selectAll(".node")
+    .data(graph.nodes).join("g").attr("class", "node");
+
+  nodeG.append("rect")
+    .attr("class", "node-rect")
+    .attr("x", d => d.x0).attr("y", d => d.y0)
+    .attr("width", d => d.x1 - d.x0).attr("height", d => Math.max(2, d.y1 - d.y0))
+    .attr("rx", 4).attr("fill", d => COLORS[d.name] || "#888").attr("opacity", 0.88)
+    .on("mousemove", (e, d) => showTip(e, d.name, d.value))
+    .on("mouseleave", hideTip);
+
+  function midY(d) { return (d.y0 + d.y1) / 2; }
+  function nodeHeight(d) { return d.y1 - d.y0; }
+  const smallThreshold = 20;
+
+  nodeG.filter(d => d.depth === 0).each(function(d) {
+    const grp = d3.select(this);
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",10).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+    } else {
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) - 6).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",12).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) + 9).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill","#e2e8f0")
+        .attr("font-size",10).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+
+  nodeG.filter(d => d.depth === 1).each(function(d) {
+    const grp = d3.select(this);
+    const cx = (d.x0 + d.x1) / 2;
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      grp.append("text").attr("x", cx).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",9).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value));
+    } else {
+      grp.append("text").attr("x", cx).attr("y", midY(d) - 6).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",11).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", cx).attr("y", midY(d) + 9).attr("dy","0.35em")
+        .attr("text-anchor","middle").attr("fill","#e2e8f0")
+        .attr("font-size",9).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+
+  // Sort depth 2 nodes by y position for overlap detection
+  let lastLabelY = -999;
+  nodeG.filter(d => d.depth === 2).each(function(d) {
+    const grp = d3.select(this);
+    let labelY = midY(d);
+
+    // Offset if too close to previous label
+    if (labelY - lastLabelY < 14) {
+      labelY = lastLabelY + 14;
+    }
+
+    grp.append("text").attr("x", d.x1 + 10).attr("y", labelY).attr("dy","0.35em")
+      .attr("text-anchor","start").attr("fill", COLORS[d.name]||"#ccc")
+      .attr("font-size",10).attr("font-weight",600)
+      .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+
+    lastLabelY = labelY;
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RENDER: Channel → Issue Type (for individual brands)
+// ══════════════════════════════════════════════════════════════════════════════
+function renderCI(raw, brandName) {
+  const nodeIndex = new Map();
+  const nodes = [];
+  const linkMap = new Map();
+
+  function getNode(name, depth) {
+    const key = `${depth}::${name}`;
+    if (!nodeIndex.has(key)) {
+      nodeIndex.set(key, nodes.length);
+      nodes.push({ name, depth });
+    }
+    return nodeIndex.get(key);
+  }
+
+  function addLink(si, ti, v) {
+    const k = `${si}->${ti}`;
+    if (!linkMap.has(k)) linkMap.set(k, { source: si, target: ti, value: 0 });
+    linkMap.get(k).value += v;
+  }
+
+  raw.forEach(([ch, it, v]) => {
+    if (!v) return;
+    const ci = getNode(ch, 0);
+    const ii = getNode(it, 1);
+    addLink(ci, ii, v);
+  });
+
+  const links = Array.from(linkMap.values());
+  const total = raw.reduce((sum, r) => sum + r[2], 0);
+  currentTotal = total;
+  function pct(n) { return ((n / total) * 100).toFixed(1) + "%"; }
+
+  const margin = { top: 100, right: 320, bottom: 20, left: 130 };
+  const totalW = 1250;
+  const totalH = 700;
+  const W = totalW - margin.left - margin.right;
+  const H = totalH - margin.top - margin.bottom;
+
+  const svg = d3.select("#chart").append("svg")
+    .attr("width", totalW).attr("height", totalH);
+
+  const chartCenterX = margin.left + (W / 2);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 28)
+    .attr("text-anchor", "middle").attr("fill", "#ffffff")
+    .attr("font-size", 24).attr("font-weight", 700)
+    .text("Support Volume Flow");
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 50)
+    .attr("text-anchor", "middle").attr("fill", "#e2e8f0")
+    .attr("font-size", 14).text(brandName);
+
+  svg.append("text")
+    .attr("x", chartCenterX).attr("y", 70)
+    .attr("text-anchor", "middle").attr("fill", "#94a3b8")
+    .attr("font-size", 12).attr("font-weight", 600).attr("letter-spacing", "0.1em")
+    .text("CHANNEL → ISSUE TYPE");
+
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const sk = d3.sankey()
+    .nodeId(d => d.index).nodeWidth(20).nodePadding(16)
+    .nodeSort((a, b) => b.value - a.value)
+    .extent([[0, 0], [W, H]]);
+
+  const graph = sk({
+    nodes: nodes.map((d, i) => ({ ...d, index: i })),
+    links: links.map(d => ({ ...d }))
+  });
+
+  const headers = ["Channel", "Issue Type"];
+  [0,1].forEach(depth => {
+    const matches = graph.nodes.filter(n => n.depth === depth);
+    if (!matches.length) return;
+    const first = matches[0];
+    const xPos = depth === 1 ? first.x1 : first.x0;
+    g.append("text")
+      .attr("x", xPos).attr("y", -16)
+      .attr("text-anchor", depth === 0 ? "start" : "end")
+      .attr("fill", "#94a3b8").attr("font-size", 11).attr("font-weight", 700)
+      .attr("letter-spacing", "0.1em").text(headers[depth].toUpperCase());
+  });
+
+  g.append("g").selectAll(".link")
+    .data(graph.links).join("path")
+    .attr("class", "link").attr("d", d3.sankeyLinkHorizontal())
+    .attr("stroke", d => COLORS[d.source.name] || "#888")
+    .attr("stroke-width", d => Math.max(1, d.width))
+    .on("mousemove", (e, d) => showTip(e, `${d.source.name} → ${d.target.name}`, d.value))
+    .on("mouseleave", hideTip);
+
+  const nodeG = g.append("g").selectAll(".node")
+    .data(graph.nodes).join("g").attr("class", "node");
+
+  nodeG.append("rect")
+    .attr("class", "node-rect")
+    .attr("x", d => d.x0).attr("y", d => d.y0)
+    .attr("width", d => d.x1 - d.x0).attr("height", d => Math.max(2, d.y1 - d.y0))
+    .attr("rx", 4).attr("fill", d => COLORS[d.name] || "#888").attr("opacity", 0.88)
+    .on("mousemove", (e, d) => showTip(e, d.name, d.value))
+    .on("mouseleave", hideTip);
+
+  function midY(d) { return (d.y0 + d.y1) / 2; }
+  function nodeHeight(d) { return d.y1 - d.y0; }
+  const smallThreshold = 25;
+
+  // Track label positions to avoid overlap
+  let lastLabelY = -999;
+
+  nodeG.filter(d => d.depth === 0).each(function(d) {
+    const grp = d3.select(this);
+    const isSmall = nodeHeight(d) < smallThreshold;
+    if (isSmall) {
+      // Single line for small nodes
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d)).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",11).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+    } else {
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) - 7).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",13).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", d.x0 - 10).attr("y", midY(d) + 10).attr("dy","0.35em")
+        .attr("text-anchor","end").attr("fill","#e2e8f0")
+        .attr("font-size",11).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+    }
+  });
+
+  // Sort depth 1 nodes by y position for overlap detection
+  const depth1Nodes = graph.nodes.filter(n => n.depth === 1).sort((a, b) => a.y0 - b.y0);
+  lastLabelY = -999;
+
+  nodeG.filter(d => d.depth === 1).each(function(d) {
+    const grp = d3.select(this);
+    const isSmall = nodeHeight(d) < smallThreshold;
+    let labelY = midY(d);
+
+    // Offset if too close to previous label
+    if (labelY - lastLabelY < 18) {
+      labelY = lastLabelY + 18;
+    }
+
+    if (isSmall) {
+      // Single line for small nodes
+      grp.append("text").attr("x", d.x1 + 10).attr("y", labelY).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",10).attr("font-weight",600)
+        .text(d.name + " " + fmt(d.value) + " (" + pct(d.value) + ")");
+      lastLabelY = labelY;
+    } else {
+      grp.append("text").attr("x", d.x1 + 10).attr("y", labelY - 7).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill", COLORS[d.name]||"#ccc")
+        .attr("font-size",12).attr("font-weight",700).text(d.name);
+      grp.append("text").attr("x", d.x1 + 10).attr("y", labelY + 10).attr("dy","0.35em")
+        .attr("text-anchor","start").attr("fill","#e2e8f0")
+        .attr("font-size",10).attr("font-weight",500).text(fmt(d.value) + " (" + pct(d.value) + ")");
+      lastLabelY = labelY + 10;
+    }
+  });
+}
+
+// Initialize with first version
+showVersion('all-ecm');
+</script>
+</body>
+</html>
